@@ -1,7 +1,17 @@
 #!/usr/bin/python3
 
-# C. Olson 5-30-2020
+# C. Olson 
 # Utility to sort through a folder of PDF files, organize and merge
+#
+# 2-17.2021
+version = "v2.1" 
+#       - Added Info and Debug Logging
+#       - Changed functionality to use the first digit of the source filename to determine order of output report
+#       - Added error checking and remediation if a blank PDF page is training in a source report
+#       - Added error checking to ensure the source files are properly staged in To_Process
+#       - Optimized module usage to remove deprecated functions
+#
+# 5-30-2020
 # v2.0 - Consolidated tasks within Main function
 #        - Added multi-page split function with keyword ability to accomodate English 2 page doc
 #        - cleaned up rename file logic based on class name
@@ -12,10 +22,7 @@ import os
 import shutil
 import logging
 from io import BytesIO
-#import glob
-#import sys
 import csv
-#import re
 import time
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.converter import TextConverter
@@ -26,7 +33,6 @@ from PyPDF2 import PdfFileReader, PdfFileWriter, PdfFileMerger
 
 #Split up a PDF File passed in as parameter page by page
 def pdf_splitter(path):
-#    fname = os.path.splitext(os.path.basename(path))[0]
     fname = path
     pdf = PdfFileReader(path)
     for page in range(pdf.getNumPages()):
@@ -100,6 +106,8 @@ def rename_file(path):
     logging.info('Path is: %s', path)
     logging.info('Text is: %s', text)
 
+    preforder = (os.path.basename(path)[0])
+    
     name,classname,rest,rest2 = text.decode('utf8').split('\n',3)
     logging.info('Name is: %s', name)
     logging.info('Classname is: %s', classname)
@@ -114,7 +122,7 @@ def rename_file(path):
     source=os.path.join(os.path.dirname(os.path.abspath(__file__)),'To_Process',filename)
 
     logging.info('Source is: %s', source)
-    newfilename = name+'_'+shortclass+'.pdf'
+    newfilename = name+'_'+preforder+'_'+shortclass+'.pdf'
     logging.info('Newfilename is: %s', newfilename)
     destination = os.path.join(os.path.dirname(os.path.abspath(__file__)),'Processed',name,newfilename)
     logging.info('Destination is: %s', destination)
@@ -128,15 +136,22 @@ def merge_files(dirName):
     #Sort the files alpabetically so they print in the right order
     sfileList = sorted(fileList, reverse = False)
     #Loop through folders and merge
-    merger = PdfFileMerger()
+    merger = PdfFileMerger(strict=False)
+    logging.info('merge_files - sFileList is: %s', sfileList)
 
     for fname in sfileList:
         merger.append(PdfFileReader(open(os.path.join(dirName, fname),'rb')))
-        logging.info('fname is: %s', fname)
-        merger.write(str(dirName)+".pdf")
+        logging.info('merge_files - fname is: %s', fname)
+
+    merger.write(str(dirName)+".pdf")
+    logging.info("wrote file")
 
 def add_student_id(path):
 
+    #Set some Error Checking Values
+    n=0
+    m=0
+    
     #open and store the csv file
     with open('StudentIDs.csv', 'r') as csvfile:
         csvreader = csv.reader(csvfile, delimiter=',')
@@ -155,8 +170,15 @@ def add_student_id(path):
             if os.path.exists(fullpath):
                 os.rename(fullpath, fullnew)
                 logging.info('*** Match Detected for %s', name)
+                n=n+1
             else:
                 logging.warning('*** Match NOT Detected for %s', name)
+                m=m+1
+    
+    if m==0:
+        print("\n** "+ str(n) +" Student Records Successfully Processed **\n")
+    else:
+        print("** REVIEW REQUIRED **\n"+ str(m) +" Student Records were not Processed due to name mismatch...\nCheck name in PDF against CSV File")
 
 if __name__ == '__main__':
     #Configuration Section - Please review before each Trimester #######################################################
@@ -164,22 +186,32 @@ if __name__ == '__main__':
     #This needs to be updated each Trimester depending on the way the classes are output
     keywords = ['Math2', 'Arts_Chorus','WL_French']
 
+    #Set desired logging level.  CRITICAL, WARNING, INFO, DEBUG 
+    loglevel = 'WARNING'
 
     #End Configuration Area ############################################################################################
-
-    loglevel = 'WARNING'
-    #loglevel = 'INFO'
 
     loglevel = os.environ.get('LOGLEVEL', loglevel).upper()
     logging.basicConfig(level=loglevel)
 
     #Start the Main Program
-
-    print ("****** Go get a cup of Coffee!! ******")
-    time.sleep(2)
-
+    print ("****** SBG Report Generator " +version+ " Beginning ... ")
+    
+    #Set the target staging location for source files to the To_Process Subfolder
     directory=os.path.join(os.path.dirname(os.path.abspath(__file__)),'To_Process')
 
+    #Make sure the source files are staged
+    if len(next(os.walk(directory))[2]) <= 1:
+        logging.critical("\nNo Files Detected in To_Process Folder to process, Exiting...\n\n")
+        raise SystemExit
+    else:
+        print ("****** Go get a cup of Coffee!! ******\n")
+        time.sleep(2)
+
+    print ("\n* Processing Source Class Files *")
+    print ("\n*******  Will process multi-page split for the following classes")
+    print (*keywords, sep= ", ")
+    print ("\n")
     for filename in os.listdir(directory):
         if filename.endswith(".pdf"):
             print ('*** Splitting File **'+ filename)
@@ -197,11 +229,10 @@ if __name__ == '__main__':
         else:
             continue
 
-    print ("\n* Class File Splitting Complete *")
     time.sleep(2)
     #Rename the PDF Files
     #Update with each filename using Loop within "Processed" Folder
-    print ("* Identifiying Student Records *")
+    print ("\n* Identifiying Student Records *")
     time.sleep(3)
     directory=os.path.join(os.path.dirname(os.path.abspath(__file__)),'To_Process')
     logging.info("Directory is "+ directory)
@@ -211,7 +242,7 @@ if __name__ == '__main__':
             print('.', end='', flush=True)
         else:
             continue
-    print ("\n* Student Record Identification Complete *")
+    print ("\n")
     time.sleep(2)
 
     #Merge the PDF Files by Student
@@ -232,4 +263,4 @@ if __name__ == '__main__':
     print ("* Renaming Operation Completed *")
 
      #MicDrop
-print ("****** The Magic Just Happened ******")
+print ("****** The Magic Just Happened - You just saved 8 hours! ******")
