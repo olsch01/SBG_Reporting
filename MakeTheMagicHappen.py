@@ -3,11 +3,16 @@
 # C. Olson 
 # Utility to sort through a folder of PDF files, organize and merge
 #
+# 11-13.2021
+version = "v2021.11.0" 
+#       - Making needed changes for multi-page class identification
+#       - Modified PDF Bytes Reading function   
+#		- Removed some UTF8 decode calls that are apparently no longer needed
 # 2-17.2021
-version = "v2.1" 
+#version = "v2.1" 
 #       - Added Info and Debug Logging
 #       - Changed functionality to use the first digit of the source filename to determine order of output report
-#       - Added error checking and remediation if a blank PDF page is training in a source report
+#       - Added error checking and remediation if a blank PDF page is trailing in a source report
 #       - Added error checking to ensure the source files are properly staged in To_Process
 #       - Optimized module usage to remove deprecated functions
 #
@@ -22,6 +27,7 @@ import os
 import shutil
 import logging
 from io import BytesIO
+from io import StringIO
 import csv
 import time
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
@@ -29,7 +35,6 @@ from pdfminer.converter import TextConverter
 from pdfminer.layout import LAParams
 from pdfminer.pdfpage import PDFPage
 from PyPDF2 import PdfFileReader, PdfFileWriter, PdfFileMerger
-
 
 #Split up a PDF File passed in as parameter page by page
 def pdf_splitter(path):
@@ -81,26 +86,34 @@ def PDFsplit2(path):
 
     os.rename(path,path+'.processed')
 
-#Convert PDF to Text to parse
+#REPLACEMENT PDF TEXT PARSER - 11-2021
 def pdf_to_text(path):
-    manager = PDFResourceManager()
-    retstr = BytesIO()
-    layout = LAParams(all_texts=True)
-    device = TextConverter(manager, retstr, laparams=layout)
-    filepath = open(path, 'rb')
-    interpreter = PDFPageInterpreter(manager, device)
 
-    for page in PDFPage.get_pages(filepath, check_extractable=True):
+    # PDFMiner boilerplate
+    rsrcmgr = PDFResourceManager()
+    sio = StringIO()
+    laparams = LAParams()
+    device = TextConverter(rsrcmgr, sio, laparams=laparams)
+    interpreter = PDFPageInterpreter(rsrcmgr, device)
+
+    # Extract text
+    fp = open(path, 'rb')
+    for page in PDFPage.get_pages(fp):
         interpreter.process_page(page)
+    fp.close()
 
-    text = retstr.getvalue()
+    # Get text from StringIO
+    text = sio.getvalue()
 
-    filepath.close()
+    # Cleanup
     device.close()
-    retstr.close()
+    sio.close()
+
     return text
 
+
 def rename_file(path):
+    logging.info("Entering Rename File Function")
     text = pdf_to_text(path)
     #DEBUG - Print Raw Text if Needed
     logging.info('Path is: %s', path)
@@ -108,7 +121,7 @@ def rename_file(path):
 
     preforder = (os.path.basename(path)[0])
     
-    name,classname,rest,rest2 = text.decode('utf8').split('\n',3)
+    name,classname,rest,rest2 = text.split('\n',3)
     logging.info('Name is: %s', name)
     logging.info('Classname is: %s', classname)
     shortclass = classname.split(' ', 1)[0]
@@ -181,10 +194,11 @@ def add_student_id(path):
         print("** REVIEW REQUIRED **\n"+ str(m) +" Student Records were not Processed due to name mismatch...\nCheck name in PDF against CSV File")
 
 if __name__ == '__main__':
-    #Configuration Section - Please review before each Trimester #######################################################
+    ########### Configuration Section - Please review before each Trimester #######################################################
     #Split the PDF File using the below keywords to identify where we need to split 2 pages instead of 1
-    #This needs to be updated each Trimester depending on the way the classes are output
-    keywords = ['Math2', 'Arts_Chorus','WL_French']
+    #This needs to be updated each Trimester depending on the way the classes are output - Any File that is 2 page per student instead of one
+    #Needs to be identified.  Code will use filename substring search.
+    keywords = ['English', 'Math', 'Habits']
 
     #Set desired logging level.  CRITICAL, WARNING, INFO, DEBUG 
     loglevel = 'WARNING'
@@ -238,9 +252,11 @@ if __name__ == '__main__':
     logging.info("Directory is "+ directory)
     for filename in os.listdir(directory):
         if filename.endswith(".pdf"):
+            logging.info("Renaming File"+ filename)
             rename_file(os.path.join(directory, filename))
             print('.', end='', flush=True)
         else:
+            logging.info("File was not a PDF"+ filename)
             continue
     print ("\n")
     time.sleep(2)
