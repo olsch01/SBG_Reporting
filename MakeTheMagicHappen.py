@@ -3,8 +3,14 @@
 # C. Olson 
 # Utility to sort through a folder of PDF files, organize and merge
 #
+# 2-26.2022
+version = "v2022.2.1" 
+#       - Adding Code to provide option for a 3 page report split
+#		- Replaced different split functions with a unified function PDFSplit3 that takes page split as argument
+#		- added execution timing of program to final output
+#		- Removed legacy pdf_splitter and PDFSplit2 functions deprecated for PDFSplit3
 # 11-13.2021
-version = "v2021.11.0" 
+#version = "v2021.11.0" 
 #       - Making needed changes for multi-page class identification
 #       - Modified PDF Bytes Reading function   
 #		- Removed some UTF8 decode calls that are apparently no longer needed
@@ -36,56 +42,39 @@ from pdfminer.layout import LAParams
 from pdfminer.pdfpage import PDFPage
 from PyPDF2 import PdfFileReader, PdfFileWriter, PdfFileMerger
 
-#Split up a PDF File passed in as parameter page by page
-def pdf_splitter(path):
-    fname = path
-    pdf = PdfFileReader(path)
-    for page in range(pdf.getNumPages()):
-        pdf_writer = PdfFileWriter()
-        pdf_writer.addPage(pdf.getPage(page))
 
-        output_filename = '{}_page_{}.pdf'.format(fname, page+1)
-
-        with open(output_filename, 'wb') as out:
-            pdf_writer.write(out)
-
-        logging.info('Created: {}'.format(output_filename))
-        
-        #Function to work around a blank PDF page - this came up with a blank page that
-        #when split, would cause an exception
-        statinfo = os.stat(output_filename)
-        if statinfo.st_size <= 1024:
-            logging.info('******* Blank Page Detected, deleting*')
-            os.remove(output_filename)
-        
-    os.rename(path,path+'.processed')
-
-def PDFsplit2(path):
-
+#PDFsplit3 is v3 designed to take the skip step as the second argument.  It provides a single unified routine in code. Old functions have been deprecated and pruned
+def PDFsplit3(path, step):
     # creating pdf reader object
-    inputFile = PdfFileReader(open(path, "rb"))
+    input_pdf = PdfFileReader(open(path, "rb"))
+    num_pages = input_pdf.numPages
+    input_dir, filename = os.path.split(path)
+    filename = os.path.splitext(filename)[0]   
+    intervals = range(0, num_pages, step)
+    intervals = dict(enumerate(intervals, 1))
 
-    for i in range(inputFile.numPages // 2):
-        output = PdfFileWriter()
-        output.addPage(inputFile.getPage(i * 2))
-
-        if i * 2 + 1 <  inputFile.numPages:
-            output.addPage(inputFile.getPage(i * 2 + 1))
-
-        output_filename = '{}_i_{}.pdf'.format(path, i+1)
-
-        with open(output_filename, 'wb') as out:
-            output.write(out)
-
-        #Function to work around a blank PDF page - this came up with a blank page that
-        #when split, would cause an exception
-        statinfo = os.stat(output_filename)
-        if statinfo.st_size <= 1024:
-            logging.info('******* Blank Page Detected, deleting*')
-            os.remove(output_filename)
+    count = 0
+    for key, val in intervals.items():
+                output_pdf = PdfFileWriter()
+                if key == len(intervals):
+                    for i in range(val, num_pages):
+                        output_pdf.addPage(input_pdf.getPage(i))
+                    nums = f'{val + 1}' if step == 1 else f'{val + 1}-{val + step}'
+                    naming = '{}_i_{}.pdf'.format(path, i+1)
+                    with open(f'{naming}{nums}.pdf', 'wb') as outfile:
+                        output_pdf.write(outfile)
+                    count += 1
+                else:
+                    for i in range(val, intervals[key + 1]):
+                        output_pdf.addPage(input_pdf.getPage(i))
+                    nums = f'{val + 1}' if step == 1 else f'{val + 1}-{val + step}'
+                    naming = '{}_i_{}.pdf'.format(path, i+1)
+                    with open(f'{naming}{nums}.pdf', 'wb') as outfile:
+                        output_pdf.write(outfile)
+                    count += 1
 
     os.rename(path,path+'.processed')
-
+        
 #REPLACEMENT PDF TEXT PARSER - 11-2021
 def pdf_to_text(path):
 
@@ -113,6 +102,8 @@ def pdf_to_text(path):
 
 
 def rename_file(path):
+    #This function is designed to scan the text of the PDF file to grab out key information like student name, class name, etc
+    #needed for proper file renaming into student folders for merge preparation
     logging.info("Entering Rename File Function")
     text = pdf_to_text(path)
     #DEBUG - Print Raw Text if Needed
@@ -194,12 +185,14 @@ def add_student_id(path):
         print("** REVIEW REQUIRED **\n"+ str(m) +" Student Records were not Processed due to name mismatch...\nCheck name in PDF against CSV File")
 
 if __name__ == '__main__':
+    startTime = time.time()
     ########### Configuration Section - Please review before each Trimester #######################################################
     #Split the PDF File using the below keywords to identify where we need to split 2 pages instead of 1
     #This needs to be updated each Trimester depending on the way the classes are output - Any File that is 2 page per student instead of one
     #Needs to be identified.  Code will use filename substring search.
-    keywords = ['English', 'Math', 'Habits']
-
+    #keywords will split for a 2 page report, keywords3 will split for a 3 page report **This needs to be cleaned up
+    keywords2 = ['History', 'Science', 'Chorus']
+    keywords3 = ['Math', 'Habits']
     #Set desired logging level.  CRITICAL, WARNING, INFO, DEBUG 
     loglevel = 'WARNING'
 
@@ -220,11 +213,14 @@ if __name__ == '__main__':
         raise SystemExit
     else:
         print ("****** Go get a cup of Coffee!! ******\n")
-        time.sleep(2)
+        time.sleep(1)
 
     print ("\n* Processing Source Class Files *")
-    print ("\n*******  Will process multi-page split for the following classes")
-    print (*keywords, sep= ", ")
+    print ("\n*******  Will process 2-page split for the following classes")
+    print (*keywords2, sep= ", ")
+    print ("\n*******  Will process 3-page split for the following classes")
+    print (*keywords3, sep= ", ")
+      
     print ("\n")
     for filename in os.listdir(directory):
         if filename.endswith(".pdf"):
@@ -232,22 +228,27 @@ if __name__ == '__main__':
             path = os.path.join(directory,filename)
 
             #if filename.contains(keywords) == True:   - This keys off the configured classes above that need multi-page splitting
-            if any(substring in filename for substring in keywords) == True:
+            if any(substring in filename for substring in keywords2) == True:
                 #Call Multi Page Split Function- This will print every other page in a 2 page doc
                 logging.info("***Multi Page PDF Detected***")
-                PDFsplit2(path)
+                PDFsplit3(path,2)
+            elif any(substring in filename for substring in keywords3) == True:
+                #Call Multi Page Split Function- This will print every other page in a 3 page doc
+                logging.info("***3 Page PDF Detected***")
+                PDFsplit3(path,3)
             else:
                 #Call Single Page Split Function
                 logging.info("***Single Page PDF Detected***")
-                pdf_splitter(path)
+                #pdf_splitter(path)
+                PDFsplit3(path,1)
         else:
             continue
 
-    time.sleep(2)
+    time.sleep(1)
     #Rename the PDF Files
     #Update with each filename using Loop within "Processed" Folder
     print ("\n* Identifiying Student Records *")
-    time.sleep(3)
+    time.sleep(1)
     directory=os.path.join(os.path.dirname(os.path.abspath(__file__)),'To_Process')
     logging.info("Directory is "+ directory)
     for filename in os.listdir(directory):
@@ -259,7 +260,6 @@ if __name__ == '__main__':
             logging.info("File was not a PDF"+ filename)
             continue
     print ("\n")
-    time.sleep(2)
 
     #Merge the PDF Files by Student
     #Iterate through each created directory and call PDF Print Action, naming the merged file by the folder name and placing in the root Directory
@@ -270,13 +270,13 @@ if __name__ == '__main__':
             logging.info('dirName is %s', dirName)
             merge_files(dirName)
             print('.', end='', flush=True)
-
     print ("\n* Student Record Consolidation Complete *")
-    time.sleep(2)
-    print ("* Appending Student ID to Final Report Filename *")
+
     #Call Add_student_id method to scan each folder, compare against student ID CSV File, and rename the files properly
+    print ("* Appending Student ID to Final Report Filename *")
     add_student_id(rootDir)
     print ("* Renaming Operation Completed *")
 
      #MicDrop
-print ("****** The Magic Just Happened - You just saved 8 hours! ******")
+    executionTime = (time.time() - startTime)
+print ("****** You just saved 8 hours! The Magic Just Happened in " + str(executionTime) +" seconds!")
